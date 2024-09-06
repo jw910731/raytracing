@@ -1,6 +1,6 @@
 use glam::f32::Vec3;
 
-use crate::ray_marching::ray_marching;
+use crate::utils::ray_marching;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Ray {
@@ -76,6 +76,7 @@ impl RayIntersectable for Sphere {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct Triangle {
     verticies: [Vec3; 3],
     normal: Vec3,
@@ -106,12 +107,30 @@ impl RayIntersectable for Triangle {
         let projection = ray.lerp(t);
 
         // Inside-outside test
-        let x = (self.verticies[0] - projection, self.verticies[1] - projection, self.verticies[2] - projection);
+        let x = (
+            self.verticies[0] - projection,
+            self.verticies[1] - projection,
+            self.verticies[2] - projection,
+        );
         let y = (x.1.cross(x.2), x.2.cross(x.0), x.0.cross(x.1));
 
         if y.0.dot(y.1) < 1e-6 || y.0.dot(y.2) < 1e-6 {
             return None;
         }
         Some(projection)
+    }
+}
+
+pub enum Geometry {
+    Sphere(Sphere),
+    Triangle(Triangle),
+}
+
+impl RayIntersectable for Geometry {
+    fn ray_intersect(&self, ray: Ray) -> Option<Vec3> {
+        match self {
+            Geometry::Sphere(s) => s.ray_intersect(ray),
+            Geometry::Triangle(t) => t.ray_intersect(ray),
+        }
     }
 }

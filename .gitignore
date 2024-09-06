@@ -1,3 +1,7 @@
 /target
 .devenv
 .direnv
+*.txt
+*.ppm
+.vscode
+!.vscode/launch.json

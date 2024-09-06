@@ -1,5 +1,3 @@
-use std::collections::btree_set::Difference;
-
 use glam::f32::Vec3;
 
 use crate::ray_marching::ray_marching;

@@ -4,7 +4,7 @@ mod scene;
 
 use std::{env::args, fs::File, io::Read};
 
-use geometry::{RayMarchable, Sphere, Triangle};
+use geometry::{RayIntersectable, Sphere, Triangle};
 use glam::{vec3, Vec3};
 
 use anyhow::{Error, Result};
@@ -14,7 +14,7 @@ struct InputData {
     eye: Vec3,
     img_coord: [Vec3; 4], // UL, UR, LL, LR
     resolution: (i32, i32),
-    objects: Vec<Box<dyn RayMarchable>>,
+    objects: Vec<Box<dyn RayIntersectable>>,
 }
 
 impl InputData {

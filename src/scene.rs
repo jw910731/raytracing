@@ -1,19 +1,16 @@
 use core::f32;
-use std::{fmt::format, fs::File, io::Write};
+use std::{fs::File, io::Write};
 
 use anyhow::Result;
 use glam::Vec3;
 
-use crate::{
-    geometry::{Ray, RayMarchable},
-    ray_marching::ray_marching,
-};
+use crate::geometry::{Ray, RayIntersectable};
 
 pub struct Scene {
     pub eye: Vec3,
     pub img_coord: [Vec3; 4], // UL, UR, LL, LR
     pub resolution: (i32, i32),
-    pub scene_obj: Vec<Box<dyn RayMarchable>>,
+    pub scene_obj: Vec<Box<dyn RayIntersectable>>,
     pub background: Vec3,
 }
 
@@ -50,7 +47,7 @@ impl Scene {
                     + hv.normalize() * world_pixel_height * (r as f32);
                 let ray = Ray::new(world_canvas_coord, world_canvas_coord - self.eye);
                 let lerp = self.scene_obj.iter().fold(f32::INFINITY, |acc, obj| {
-                    let collision = ray_marching(ray, obj.as_ref());
+                    let collision = obj.ray_intersect(ray);
                     let t = collision.map(|e| ray.solve(e));
                     t.map(|t| acc.min(t)).unwrap_or(acc)
                 });

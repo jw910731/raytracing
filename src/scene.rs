@@ -3,7 +3,7 @@ use std::{fs::File, io::Write};
 
 use anyhow::Result;
 use glam::{vec3, Vec3};
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
     geometry::{Geometry, Ray, RayIntersectable},
@@ -29,43 +29,33 @@ pub struct Scene {
     pub resolution: (i32, i32),
     pub scene_obj: Vec<Geometry>,
     pub background: Vec3,
-    canvas: Vec<Vec3>,
 }
 
 impl Scene {
     pub fn new(data: InputData) -> Scene {
-        let size = (data.resolution.0 * data.resolution.1) as usize;
-        let canvas = vec![vec3(0f32, 0f32, 0f32); size];
         Scene {
             eye: data.eye,
             img_coord: data.img_coord,
             resolution: data.resolution,
             scene_obj: data.objects,
             background: vec3(0f32, 0f32, 0f32),
-            canvas,
         }
     }
 }
 
-fn render_worker(
-    output: &mut Vec3,
-    coord: Vec3,
-    eye: &Vec3,
-    background: &Vec3,
-    objs: &Vec<Geometry>,
-) -> Vec3 {
+fn render_worker(coord: Vec3, eye: &Vec3, background: &Vec3, objs: &Vec<Geometry>) -> Vec3 {
     let ray = Ray::new(coord, coord - eye);
     let lerp = objs.iter().fold(f32::INFINITY, |acc, obj| {
         let collision = obj.ray_intersect(ray);
         let t = collision.map(|e| ray.solve(e));
         t.map(|t| acc.min(t)).unwrap_or(acc)
     });
-    *output = if lerp.is_finite() {
+    let output = if lerp.is_finite() {
         ray.lerp(lerp)
     } else {
         background.clone()
     };
-    output.clone()
+    output
 }
 
 impl Scene {
@@ -81,29 +71,27 @@ impl Scene {
         let origin = self.img_coord[0]
             + (wv.normalize() * world_pixel_width / 2.0)
             + (hv.normalize() * world_pixel_height / 2.0);
-        self.canvas
-            .par_iter_mut()
-            .enumerate()
-            .map(|(i, pixel_ref)| {
-                let r = i as i32 / self.resolution.0;
-                let c = i as i32 % self.resolution.0;
-                let pixel_coord = origin
-                    + wv.normalize() * world_pixel_width * (c as f32)
-                    + hv.normalize() * world_pixel_height * (r as f32);
-                render_worker(
-                    pixel_ref,
-                    pixel_coord,
-                    &self.eye,
-                    &self.background,
-                    &self.scene_obj,
-                );
-            })
-            .count();
-        for r in 0..self.resolution.1 {
-            for c in 0..self.resolution.0 {
-                output_util(self.canvas[(r * self.resolution.0 + c) as usize], file)?;
+        let eval_pixel = |i| {
+            let r = i as i32 / self.resolution.0;
+            let c = i as i32 % self.resolution.0;
+            let pixel_coord = origin
+                + wv.normalize() * world_pixel_width * (c as f32)
+                + hv.normalize() * world_pixel_height * (r as f32);
+            render_worker(pixel_coord, &self.eye, &self.background, &self.scene_obj)
+        };
+
+        let size = self.resolution.0 as usize * self.resolution.1 as usize;
+        let pixels = (0..size)
+            .into_par_iter()
+            .map(|i| eval_pixel(i))
+            .collect_vec_list();
+        for (i, pixel) in pixels.iter().flatten().enumerate() {
+            let r = i as i32 / self.resolution.0;
+            let c = i as i32 % self.resolution.0;
+            if c == 0 && r > 0 {
+                file.write("\n".as_bytes())?;
             }
-            file.write("\n".as_bytes())?;
+            output_util(*pixel, file)?;
         }
         Ok(())
     }

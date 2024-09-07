@@ -10,16 +10,22 @@ use crate::{
     utils::InputData,
 };
 
-fn output_util(vec: Vec3, file: &mut File) -> Result<()> {
-    let collision = vec;
-    let results = (255.0 * (collision + 1.0) / 2.0).round();
-    file.write(
-        format!(
-            "{} {} {} ",
-            results.x as i32, results.y as i32, results.z as i32
-        )
-        .as_bytes(),
-    )?;
+fn write_all<W: Write, I: Iterator<Item = u8>>(writer: &mut W, iter: I) -> Result<()> {
+    const SIZE: usize = 1024;
+
+    let mut buffer = [0u8; SIZE];
+    let mut index = 0;
+
+    for i in iter {
+        buffer[index] = i;
+
+        index += 1;
+        if index == SIZE {
+            writer.write_all(&buffer)?;
+            index = 0;
+        }
+    }
+    writer.write_all(&buffer[..index])?;
     Ok(())
 }
 
@@ -60,7 +66,7 @@ fn render_worker(coord: Vec3, eye: &Vec3, background: &Vec3, objs: &Vec<Geometry
 
 impl Scene {
     pub fn render(&mut self, file: &mut File) -> Result<()> {
-        file.write("P3\n".as_bytes())?;
+        file.write("P6\n".as_bytes())?;
         file.write(format!("{} {}\n255\n", self.resolution.0, self.resolution.1).as_bytes())?;
         let (wv, hv) = (
             self.img_coord[1] - self.img_coord[0],
@@ -84,15 +90,12 @@ impl Scene {
         let pixels = (0..size)
             .into_par_iter()
             .map(|i| eval_pixel(i))
+            .flat_map(|pixel| {
+                let result = (255.0 * (pixel + 1.0) / 2.0).round();
+                [result.x as u8, result.y as u8, result.z as u8]
+            })
             .collect_vec_list();
-        for (i, pixel) in pixels.iter().flatten().enumerate() {
-            let r = i as i32 / self.resolution.0;
-            let c = i as i32 % self.resolution.0;
-            if c == 0 && r > 0 {
-                file.write("\n".as_bytes())?;
-            }
-            output_util(*pixel, file)?;
-        }
+        write_all(file, pixels.into_iter().flatten())?;
         Ok(())
     }
 }

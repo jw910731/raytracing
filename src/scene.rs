@@ -3,31 +3,12 @@ use std::{fs::File, io::Write};
 
 use anyhow::Result;
 use glam::{vec3, Vec3};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::prelude::*;
 
 use crate::{
     geometry::{Geometry, Ray, RayIntersectable},
     utils::InputData,
 };
-
-fn write_all<W: Write, I: Iterator<Item = u8>>(writer: &mut W, iter: I) -> Result<()> {
-    const SIZE: usize = 1024;
-
-    let mut buffer = [0u8; SIZE];
-    let mut index = 0;
-
-    for i in iter {
-        buffer[index] = i;
-
-        index += 1;
-        if index == SIZE {
-            writer.write_all(&buffer)?;
-            index = 0;
-        }
-    }
-    writer.write_all(&buffer[..index])?;
-    Ok(())
-}
 
 pub struct Scene {
     pub eye: Vec3,
@@ -87,15 +68,15 @@ impl Scene {
         };
 
         let size = self.resolution.0 as usize * self.resolution.1 as usize;
-        let pixels = (0..size)
+        let canvas = (0..size)
             .into_par_iter()
             .map(|i| eval_pixel(i))
             .flat_map(|pixel| {
                 let result = (255.0 * (pixel + 1.0) / 2.0).round();
                 [result.x as u8, result.y as u8, result.z as u8]
             })
-            .collect_vec_list();
-        write_all(file, pixels.into_iter().flatten())?;
+            .collect::<Vec<_>>();
+        file.write_all(&canvas)?;
         Ok(())
     }
 }

@@ -114,7 +114,7 @@ impl RayIntersectable for Triangle {
         );
         let y = (x.1.cross(x.2), x.2.cross(x.0), x.0.cross(x.1));
 
-        if y.0.dot(y.1) < 1e-6 || y.0.dot(y.2) < 1e-6 {
+        if y.0.dot(y.1) <= 0.0  || y.0.dot(y.2) <= 0.0 {
             return None;
         }
         Some(projection)

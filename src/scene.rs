@@ -38,18 +38,24 @@ impl Scene {
 
 fn render_worker(coord: Vec3, eye: &Vec3, background: &Vec3, objs: &Vec<Geometry>) -> Vec3 {
     let ray = Ray::new(coord, coord - eye);
-    let lerp = objs
+    let output = if let Some((lerp, _geo)) = objs
         .par_iter()
+        .filter_map(|obj| {
+            let collision = obj.ray_intersect(ray);
+            let t = collision.map(|e| ray.solve(e));
+            if let Some(t) = t {
+                Some((t, obj))
+            } else {
+                None
+            }
+        })
+        .collect_vec_list()
+        .into_iter()
+        .flatten()
         .fold(
-            || f32::INFINITY,
-            |acc, obj| {
-                let collision = obj.ray_intersect(ray);
-                let t = collision.map(|e| ray.solve(e));
-                t.map(|t| acc.min(t)).unwrap_or(acc)
-            },
-        )
-        .reduce(|| f32::INFINITY, |acc, e| acc.min(e));
-    let output = if lerp.is_finite() {
+            Option::None,
+            |acc, e| Some(acc.map_or(e, |acc: (f32, &Geometry)| if acc.0 > e.0 { e } else { acc })),
+        ) {
         ray.lerp(lerp)
     } else {
         background.clone()
@@ -83,10 +89,8 @@ impl Scene {
                                 let threshold = 1 << (sq * 2);
                                 if i < threshold {
                                     (
-                                        ((1 + i / sq) as f32
-                                            / (2.0 * self.antialiasing as f32)),
-                                        ((1 + i % sq) as f32
-                                            / (2.0 * self.antialiasing as f32)),
+                                        ((1 + i / sq) as f32 / (2.0 * self.antialiasing as f32)),
+                                        ((1 + i % sq) as f32 / (2.0 * self.antialiasing as f32)),
                                     )
                                 } else {
                                     (rng.gen_range(0.0..1.0), rng.gen_range(0.0..1.0))

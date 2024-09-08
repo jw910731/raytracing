@@ -3,6 +3,7 @@ use std::{fs::File, io::Write};
 
 use anyhow::Result;
 use glam::{vec3, Vec3};
+use rand::{thread_rng, Rng};
 use rayon::prelude::*;
 
 use crate::{
@@ -16,27 +17,38 @@ pub struct Scene {
     pub resolution: (i32, i32),
     pub scene_obj: Vec<Geometry>,
     pub background: Vec3,
+    pub antialiasing: u8,
 }
 
 impl Scene {
     pub fn new(data: InputData) -> Scene {
+        Scene::new_with_antialiasing(data, 1)
+    }
+    pub fn new_with_antialiasing(data: InputData, antialiasing: u8) -> Scene {
         Scene {
             eye: data.eye,
             img_coord: data.img_coord,
             resolution: data.resolution,
             scene_obj: data.objects,
             background: vec3(0f32, 0f32, 0f32),
+            antialiasing,
         }
     }
 }
 
 fn render_worker(coord: Vec3, eye: &Vec3, background: &Vec3, objs: &Vec<Geometry>) -> Vec3 {
     let ray = Ray::new(coord, coord - eye);
-    let lerp = objs.iter().fold(f32::INFINITY, |acc, obj| {
-        let collision = obj.ray_intersect(ray);
-        let t = collision.map(|e| ray.solve(e));
-        t.map(|t| acc.min(t)).unwrap_or(acc)
-    });
+    let lerp = objs
+        .par_iter()
+        .fold(
+            || f32::INFINITY,
+            |acc, obj| {
+                let collision = obj.ray_intersect(ray);
+                let t = collision.map(|e| ray.solve(e));
+                t.map(|t| acc.min(t)).unwrap_or(acc)
+            },
+        )
+        .reduce(|| f32::INFINITY, |acc, e| acc.min(e));
     let output = if lerp.is_finite() {
         ray.lerp(lerp)
     } else {
@@ -55,22 +67,40 @@ impl Scene {
         );
         let world_pixel_width = wv.length() / self.resolution.0 as f32;
         let world_pixel_height = hv.length() / self.resolution.1 as f32;
-        let origin = self.img_coord[0]
-            + (wv.normalize() * world_pixel_width / 2.0)
-            + (hv.normalize() * world_pixel_height / 2.0);
-        let eval_pixel = |i| {
-            let r = i as i32 / self.resolution.0;
-            let c = i as i32 % self.resolution.0;
-            let pixel_coord = origin
-                + wv.normalize() * world_pixel_width * (c as f32)
-                + hv.normalize() * world_pixel_height * (r as f32);
-            render_worker(pixel_coord, &self.eye, &self.background, &self.scene_obj)
-        };
 
         let size = self.resolution.0 as usize * self.resolution.1 as usize;
         let canvas = (0..size)
             .into_par_iter()
-            .map(|i| eval_pixel(i))
+            .map_init(
+                || thread_rng(),
+                |rng, i| {
+                    let r = i as i32 / self.resolution.0;
+                    let c = i as i32 % self.resolution.0;
+                    (0..self.antialiasing)
+                        .map(|i| {
+                            let (subc, subr) = {
+                                let sq = 1 << (self.antialiasing.trailing_zeros() / 2);
+                                let threshold = 1 << (sq * 2);
+                                if i < threshold {
+                                    (
+                                        ((1 + i / sq) as f32
+                                            / (2.0 * self.antialiasing as f32)),
+                                        ((1 + i % sq) as f32
+                                            / (2.0 * self.antialiasing as f32)),
+                                    )
+                                } else {
+                                    (rng.gen_range(0.0..1.0), rng.gen_range(0.0..1.0))
+                                }
+                            };
+                            let pixel_coord = self.img_coord[0]
+                                + wv.normalize() * world_pixel_width * (c as f32 + subc)
+                                + hv.normalize() * world_pixel_height * (r as f32 + subr);
+                            render_worker(pixel_coord, &self.eye, &self.background, &self.scene_obj)
+                        })
+                        .map(|v| v / (self.antialiasing as f32))
+                        .sum::<Vec3>()
+                },
+            )
             .flat_map(|pixel| {
                 let result = (255.0 * (pixel + 1.0) / 2.0).round();
                 [result.x as u8, result.y as u8, result.z as u8]

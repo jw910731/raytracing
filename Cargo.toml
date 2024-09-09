@@ -13,3 +13,9 @@ rayon = "1.10.0"
 
 [dev-dependencies]
 anyhow = { version = "1.0.86", features = ["backtrace"] }
+
+[profile.release]
+lto = "fat"
+opt-level = 3
+codegen-units = 1
+panic = "abort"

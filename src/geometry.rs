@@ -1,4 +1,4 @@
-use glam::f32::Vec3;
+use glam::f32::Vec3A as Vec3;
 
 use crate::utils::ray_marching;
 

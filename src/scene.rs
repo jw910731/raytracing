@@ -2,7 +2,7 @@ use core::f32;
 use std::{fs::File, io::Write};
 
 use anyhow::Result;
-use glam::{vec3, Vec3};
+use glam::{vec3a as vec3, Vec3A as Vec3};
 use rand::{thread_rng, Rng};
 use rayon::prelude::*;
 
@@ -66,7 +66,7 @@ fn render_worker(coord: Vec3, eye: &Vec3, background: &Vec3, objs: &Vec<Geometry
 impl Scene {
     pub fn render(&mut self, file: &mut File) -> Result<()> {
         file.write("P6\n".as_bytes())?;
-        file.write(format!("{} {}\n255\n", self.resolution.0, self.resolution.1).as_bytes())?;
+        file.write(format!("{} {}\n65535\n", self.resolution.0, self.resolution.1).as_bytes())?;
         let (wv, hv) = (
             self.img_coord[1] - self.img_coord[0],
             self.img_coord[2] - self.img_coord[0],
@@ -106,8 +106,7 @@ impl Scene {
                 },
             )
             .flat_map(|pixel| {
-                let result = (255.0 * (pixel + 1.0) / 2.0).round();
-                [result.x as u8, result.y as u8, result.z as u8]
+                (255.0 * (pixel + 1.0) / 2.0).round().as_u16vec3().to_array().iter().flat_map(|e| e.to_be_bytes()).collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
         file.write_all(&canvas)?;

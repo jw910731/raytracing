@@ -1,7 +1,7 @@
-use glam::Vec3;
+use glam::Vec3A as Vec3;
 
 use crate::geometry::{Geometry, Ray, RayMarchable, Sphere, Triangle};
-use glam::vec3;
+use glam::vec3a as vec3;
 
 use anyhow::{Error, Result};
 

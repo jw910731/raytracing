@@ -2,7 +2,7 @@ use core::f32;
 use std::{fs::File, io::Write};
 
 use anyhow::Result;
-use glam::{vec3, Vec3};
+use glam::{vec3a as vec3, Vec3A as Vec3};
 use rand::{thread_rng, Rng};
 use rayon::prelude::*;
 

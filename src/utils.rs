@@ -28,7 +28,9 @@ pub fn ray_marching<T: RayMarchable + ?Sized>(ray: Ray, obj: &T) -> Option<Vec3>
 
 pub struct InputData {
     pub eye: Vec3,
-    pub img_coord: [Vec3; 4], // UL, UR, LL, LR
+    pub view_direction: Vec3,
+    pub up_direction: Vec3,
+    pub fov: f32, // in degree
     pub resolution: (i32, i32),
     pub objects: Vec<Geometry>,
 }
@@ -37,12 +39,9 @@ impl InputData {
     pub fn parse(input_text: &str) -> Result<InputData> {
         let mut ret = InputData {
             eye: vec3(0f32, 0f32, 0f32),
-            img_coord: [
-                vec3(0f32, 0f32, 0f32),
-                vec3(0f32, 0f32, 0f32),
-                vec3(0f32, 0f32, 0f32),
-                vec3(0f32, 0f32, 0f32),
-            ],
+            view_direction: vec3(0f32, 0f32, 0f32),
+            up_direction:vec3(0f32, 0f32, 0f32),
+            fov: 0f32,
             resolution: (0, 0),
             objects: vec![],
         };
@@ -59,29 +58,20 @@ impl InputData {
                         sep.next().ok_or(parse_error())?.parse()?,
                     );
                 }
-                "O" => {
-                    ret.img_coord = [
-                        vec3(
-                            sep.next().ok_or(parse_error())?.parse()?,
-                            sep.next().ok_or(parse_error())?.parse()?,
-                            sep.next().ok_or(parse_error())?.parse()?,
-                        ),
-                        vec3(
-                            sep.next().ok_or(parse_error())?.parse()?,
-                            sep.next().ok_or(parse_error())?.parse()?,
-                            sep.next().ok_or(parse_error())?.parse()?,
-                        ),
-                        vec3(
-                            sep.next().ok_or(parse_error())?.parse()?,
-                            sep.next().ok_or(parse_error())?.parse()?,
-                            sep.next().ok_or(parse_error())?.parse()?,
-                        ),
-                        vec3(
-                            sep.next().ok_or(parse_error())?.parse()?,
-                            sep.next().ok_or(parse_error())?.parse()?,
-                            sep.next().ok_or(parse_error())?.parse()?,
-                        ),
-                    ];
+                "V" => {
+                    ret.view_direction = vec3(
+                        sep.next().ok_or(parse_error())?.parse()?,
+                        sep.next().ok_or(parse_error())?.parse()?,
+                        sep.next().ok_or(parse_error())?.parse()?,
+                    );
+                    ret.up_direction = vec3(
+                        sep.next().ok_or(parse_error())?.parse()?,
+                        sep.next().ok_or(parse_error())?.parse()?,
+                        sep.next().ok_or(parse_error())?.parse()?,
+                    );
+                }
+                "F" => {
+                    ret.fov = sep.next().ok_or(parse_error())?.parse()?;
                 }
                 "R" => {
                     ret.resolution = (

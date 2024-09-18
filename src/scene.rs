@@ -91,7 +91,7 @@ impl Scene {
                         .map(|i| {
                             let (subc, subr) = {
                                 let sq = 1 << (self.antialiasing.trailing_zeros() / 2);
-                                let threshold = 1 << (sq * 2);
+                                let threshold = sq << 2;
                                 if i < threshold {
                                     (
                                         ((1 + i / sq) as f32 / (2.0 * self.antialiasing as f32)),

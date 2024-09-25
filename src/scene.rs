@@ -79,10 +79,13 @@ fn render_worker(
         let collision = ray.lerp(lerp);
 
         let normal_vec = geo.normal(collision).normalize();
+        let eye_vec = eye - collision;
+        let normal_vec = normal_vec * (normal_vec.dot(eye_vec)).signum();
+
         let light_direction = (light - collision).normalize();
-        let diffuse = normal_vec.dot(-light_direction).max(0f32);
+        let diffuse = normal_vec.dot(light_direction).max(0f32);
         let specular = normal_vec
-            .dot((light_direction.normalize() + (eye - collision).normalize()).normalize())
+            .dot((light_direction.normalize() + eye_vec.normalize()).normalize())
             .max(0.0)
             .powf(material.phong.3);
         (material.color * (material.phong.0 + material.phong.1 * diffuse) + Vec3::ONE * specular)

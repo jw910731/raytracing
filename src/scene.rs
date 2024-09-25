@@ -77,10 +77,12 @@ fn render_worker(
             ))
         }) {
         let collision = ray.lerp(lerp);
-
-        let normal_vec = geo.normal(collision).normalize();
         let eye_vec = eye - collision;
-        let normal_vec = normal_vec * (normal_vec.dot(eye_vec)).signum();
+
+        let normal_vec = {
+            let tmp = geo.normal(collision).normalize();
+            tmp * (tmp.dot(eye_vec)).signum()
+        };
 
         let light_direction = (light - collision).normalize();
         let diffuse = normal_vec.dot(light_direction).max(0f32);

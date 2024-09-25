@@ -97,19 +97,6 @@ impl Triangle {
             normal: (pts[1] - pts[0]).cross(pts[2] - pts[0]),
         }
     }
-
-    // Pt must be on the same plane of triangle
-    fn pt_on_plane(&self, pt: Vec3) -> bool {
-        // Inside-outside test
-        let x = (
-            self.verticies[0] - pt,
-            self.verticies[1] - pt,
-            self.verticies[2] - pt,
-        );
-        let y = (x.1.cross(x.2), x.2.cross(x.0), x.0.cross(x.1));
-
-        y.0.dot(y.1) <= 0.0 || y.0.dot(y.2) <= 0.0
-    }
 }
 
 impl RayIntersectable for Triangle {
@@ -146,9 +133,26 @@ impl RayIntersectable for Triangle {
     }
 }
 
+struct Point(Vec3);
+
+impl RayIntersectable for Point {
+    fn ray_intersect(&self, ray: Ray) -> Option<Vec3> {
+        if ray.direction().dot((self.0 - ray.origin).normalize()) - 1.0 < 1e-6 {
+            Some(ray.lerp(ray.solve(self.0)))
+        } else {
+            None
+        }
+    }
+
+    fn normal(&self, _intersection_point: Vec3) -> Vec3 {
+        Vec3::ZERO
+    }
+}
+
 pub enum Geometry {
     Sphere(Sphere),
     Triangle(Triangle),
+    Point(Point),
 }
 
 impl RayIntersectable for Geometry {
@@ -156,6 +160,7 @@ impl RayIntersectable for Geometry {
         match self {
             Geometry::Sphere(s) => s.ray_intersect(ray),
             Geometry::Triangle(t) => t.ray_intersect(ray),
+            Geometry::Point(p) => p.ray_intersect(ray),
         }
     }
 
@@ -163,6 +168,7 @@ impl RayIntersectable for Geometry {
         match self {
             Geometry::Sphere(s) => s.normal(intersection_point),
             Geometry::Triangle(t) => t.normal(intersection_point),
+            Geometry::Point(p) => p.normal(intersection_point),
         }
     }
 }

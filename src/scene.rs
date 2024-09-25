@@ -1,5 +1,5 @@
 use core::f32;
-use std::{fs::File, io::Write, sync::Arc};
+use std::{fs::File, io::Write, ptr, sync::Arc};
 
 use anyhow::Result;
 use glam::{vec3a as vec3, Vec3A as Vec3};
@@ -48,6 +48,7 @@ impl Scene {
     }
 }
 
+const MAX_RECURSION_DEPTH: u32 = 64;
 fn render_worker(
     coord: Vec3,
     eye: &Vec3,
@@ -55,9 +56,22 @@ fn render_worker(
     objs: &[(Geometry, Arc<Material>)],
     light: &Vec3,
 ) -> Vec3 {
+    render_worker_inner(coord, eye, background, objs, light, 0).unwrap_or(background.clone())
+}
+fn render_worker_inner(
+    coord: Vec3,
+    eye: &Vec3,
+    background: &Vec3,
+    objs: &[(Geometry, Arc<Material>)],
+    light: &Vec3,
+    recursion_depth: u32,
+) -> Option<Vec3> {
+    if recursion_depth > MAX_RECURSION_DEPTH {
+        return None;
+    }
+
     let ray = Ray::new(coord, coord - eye);
-    let output = if let Some((lerp, geo, material)) = objs
-        .par_iter()
+    objs.par_iter()
         .filter_map(|(obj, material)| {
             let collision = obj.ray_intersect(ray);
             let t = collision.map(|e| ray.solve(e));
@@ -75,27 +89,68 @@ fn render_worker(
                 e,
                 |acc: (f32, &Geometry, &Arc<Material>)| if acc.0 > e.0 { e } else { acc },
             ))
-        }) {
-        let collision = ray.lerp(lerp);
-        let eye_vec = eye - collision;
+        })
+        .map(|(lerp, geo, material)| {
+            let collision = ray.lerp(lerp);
+            let eye_vec = eye - collision;
 
-        let normal_vec = {
-            let tmp = geo.normal(collision).normalize();
-            tmp * (tmp.dot(eye_vec)).signum()
-        };
+            let normal_vec = {
+                let tmp = geo.normal(collision).normalize();
+                tmp * (tmp.dot(eye_vec)).signum()
+            };
 
-        let light_direction = (light - collision).normalize();
-        let diffuse = normal_vec.dot(light_direction).max(0f32);
-        let specular = normal_vec
-            .dot((light_direction.normalize() + eye_vec.normalize()).normalize())
-            .max(0.0)
-            .powf(material.phong.3);
-        (material.color * (material.phong.0 + material.phong.1 * diffuse) + Vec3::ONE * specular)
+            let light_direction = (light - collision).normalize();
+            let shadow = objs
+                .par_iter()
+                .filter_map(|(obj, material)| {
+                    if ptr::eq(obj, geo) {
+                        return None;
+                    }
+                    let ray = Ray::new(collision, light_direction - collision);
+                    let collision = obj.ray_intersect(ray);
+                    let t = collision.map(|e| ray.solve(e));
+                    if let Some(t) = t {
+                        Some((t, obj, material))
+                    } else {
+                        None
+                    }
+                })
+                .collect_vec_list()
+                .into_iter()
+                .len()
+                > 0;
+
+            let diffuse = if !shadow {
+                normal_vec.dot(light_direction).max(0f32)
+            } else {
+                0f32
+            };
+            let specular = if !shadow {
+                normal_vec
+                    .dot((light_direction.normalize() + eye_vec.normalize()).normalize())
+                    .max(0.0)
+                    .powf(material.phong.3)
+            } else {
+                0f32
+            };
+
+            let reflect_vec = (-eye_vec).reflect(normal_vec);
+            let reflect_color = render_worker_inner(
+                collision,
+                &reflect_vec,
+                background,
+                objs,
+                light,
+                recursion_depth + 1,
+            );
+
+            (material.color * (material.phong.0 + material.phong.1 * diffuse)
+                + Vec3::ONE * specular
+                + reflect_color
+                    .map(|r| r * material.reflect_rate)
+                    .unwrap_or(Vec3::ZERO))
             .clamp(Vec3::ZERO, Vec3::ONE)
-    } else {
-        background.clone()
-    };
-    output
+        })
 }
 
 impl Scene {

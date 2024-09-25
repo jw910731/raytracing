@@ -42,7 +42,11 @@ pub trait RayMarchable: Distance {
 }
 
 pub trait RayIntersectable {
+    // Return intersection point in respect to the given ray
     fn ray_intersect(&self, ray: Ray) -> Option<Vec3>;
+
+    // Get normal vector at the intersection point
+    fn normal(&self, intersection_point: Vec3) -> Vec3;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -74,6 +78,10 @@ impl RayIntersectable for Sphere {
     fn ray_intersect(&self, ray: Ray) -> Option<Vec3> {
         ray_marching(ray, self)
     }
+
+    fn normal(&self, intersection_point: Vec3) -> Vec3 {
+        (self.center - intersection_point).normalize()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -88,6 +96,19 @@ impl Triangle {
             verticies: pts,
             normal: (pts[1] - pts[0]).cross(pts[2] - pts[0]),
         }
+    }
+
+    // Pt must be on the same plane of triangle
+    fn pt_on_plane(&self, pt: Vec3) -> bool {
+        // Inside-outside test
+        let x = (
+            self.verticies[0] - pt,
+            self.verticies[1] - pt,
+            self.verticies[2] - pt,
+        );
+        let y = (x.1.cross(x.2), x.2.cross(x.0), x.0.cross(x.1));
+
+        y.0.dot(y.1) <= 0.0 || y.0.dot(y.2) <= 0.0
     }
 }
 
@@ -114,10 +135,14 @@ impl RayIntersectable for Triangle {
         );
         let y = (x.1.cross(x.2), x.2.cross(x.0), x.0.cross(x.1));
 
-        if y.0.dot(y.1) <= 0.0  || y.0.dot(y.2) <= 0.0 {
+        if y.0.dot(y.1) <= 0.0 || y.0.dot(y.2) <= 0.0 {
             return None;
         }
         Some(projection)
+    }
+
+    fn normal(&self, _intersection_point: Vec3) -> Vec3 {
+        (self.verticies[1] - self.verticies[0]).cross(self.verticies[2] - self.verticies[0])
     }
 }
 
@@ -131,6 +156,13 @@ impl RayIntersectable for Geometry {
         match self {
             Geometry::Sphere(s) => s.ray_intersect(ray),
             Geometry::Triangle(t) => t.ray_intersect(ray),
+        }
+    }
+
+    fn normal(&self, intersection_point: Vec3) -> Vec3 {
+        match self {
+            Geometry::Sphere(s) => s.normal(intersection_point),
+            Geometry::Triangle(t) => t.normal(intersection_point),
         }
     }
 }

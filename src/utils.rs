@@ -7,19 +7,17 @@ use anyhow::{Error, Result};
 
 pub fn ray_marching<T: RayMarchable + ?Sized>(ray: Ray, obj: &T) -> Option<Vec3> {
     let mut t = obj.distance(ray.lerp(0.0));
-    const LIMIT: i32 = 100;
-    let mut i = 0;
+    let max_dist = obj.distance(ray.lerp(0.0));
     loop {
         let next_pt = ray.lerp(t);
         let new_dist = obj.distance(next_pt);
         if new_dist < 1e-6 {
             break;
         }
-        if i >= LIMIT {
+        if obj.distance(next_pt) > max_dist {
             return None;
         }
         t += new_dist;
-        i += 1;
     }
 
     // Prevent ray from marching INTO the sphere, fix the answer to the surface of the sphere

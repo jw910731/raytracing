@@ -2,12 +2,23 @@ mod geometry;
 mod scene;
 mod utils;
 
-use std::{env::args, fs::File, io::Read};
+use std::{
+    env::{self, args},
+    fs::File,
+    io::Read,
+};
 
 use scene::Scene;
 use utils::InputData;
 
 fn main() {
+    let vars = env::vars().collect::<Vec<_>>();
+    if vars.iter().any(|s| s.0 == "SERIALIZE") {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build_global()
+            .unwrap();
+    }
     let args = args().collect::<Vec<_>>();
     if args.len() < 3 {
         eprintln!("You should provide 1st argument to specify the path of input file");
@@ -25,7 +36,9 @@ fn main() {
         if args.len() < 4 {
             1
         } else {
-            args[3].parse::<u8>().expect("fail to parse given antialiasing level")
+            args[3]
+                .parse::<u8>()
+                .expect("fail to parse given antialiasing level")
         },
     );
     scene.render(&mut out_file).unwrap();

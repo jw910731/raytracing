@@ -72,6 +72,7 @@ fn render_worker_inner(
         .par_iter()
         .filter_map(|(obj, material)| {
             let collision = obj.ray_intersect(ray);
+            assert!(collision.is_none() || !collision.unwrap_or(Vec3::NEG_INFINITY).is_nan());
             let t = collision.map(|e| ray.solve(e));
             t.map(|t| (t, obj, material))
         })
@@ -81,7 +82,7 @@ fn render_worker_inner(
         .fold(Option::None, |acc, e| {
             Some(acc.map_or(
                 e,
-                |acc: (f32, &Geometry, &Arc<Material>)| if acc.0 > e.0 { e } else { acc },
+                |acc: (f32, &Geometry, &Arc<Material>)| if !e.0.is_nan() && acc.0 > e.0 { e } else { acc },
             ))
         })
         .map(|(lerp, geo, material)| {
@@ -91,6 +92,8 @@ fn render_worker_inner(
                 let tmp = geo.normal(collision).normalize();
                 tmp * (tmp.dot(-direction)).signum()
             };
+
+            assert!(!normal_vec.is_nan());
 
             let light_direction = (scene.light_position - collision).normalize();
             let shadow = scene
@@ -125,27 +128,27 @@ fn render_worker_inner(
             let reflect_vec = direction.reflect(normal_vec);
             let epsilon_factor = 1.0 / (scene.resolution.0.max(scene.resolution.1)) as f32;
             let mut rng = thread_rng();
-            let reflect_color: Vec3 = {
-                let samples =
-                    (3.0 * (scene.antialiasing as f32 * 2.0).powf(importance * 3.0)) as u32;
-                (1..samples)
-                    .map(|_| Vec3::from_array(rng.sample(UnitSphere)))
-                    .filter_map(|epsilon| {
-                        render_worker_inner(
-                            &(collision + epsilon * epsilon_factor),
-                            &reflect_vec,
-                            scene,
-                            importance * material.reflect_rate,
-                            recursion_depth + 1,
-                        )
-                    })
-                    .map(|p| p / samples as f32)
-                    .sum::<Vec3>()
-            };
+            // let reflect_color: Vec3 = {
+            //     let samples =
+            //         (3.0 * (scene.antialiasing as f32 * 2.0).powf(importance * 3.0)) as u32;
+            //     (1..samples)
+            //         .map(|_| Vec3::from_array(rng.sample(UnitSphere)))
+            //         .filter_map(|epsilon| {
+            //             render_worker_inner(
+            //                 &(collision + epsilon * epsilon_factor),
+            //                 &reflect_vec,
+            //                 scene,
+            //                 importance * material.reflect_rate,
+            //                 recursion_depth + 1,
+            //             )
+            //         })
+            //         .map(|p| p / samples as f32)
+            //         .sum::<Vec3>()
+            // };
 
             (material.color * (material.phong.0 + material.phong.1 * diffuse)
                 + Vec3::ONE * specular
-                + reflect_color * material.reflect_rate)
+                /* + reflect_color * material.reflect_rate */)
                 .clamp(Vec3::ZERO, Vec3::ONE)
         })
 }
@@ -159,7 +162,7 @@ impl Scene {
         let size = self.resolution.0 as usize * self.resolution.1 as usize;
         let canvas = (0..size)
             .into_par_iter()
-            .progress_count(size as u64)
+            // .progress_count(size as u64)
             .map_init(
                 || thread_rng(),
                 |rng, i| {

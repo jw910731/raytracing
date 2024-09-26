@@ -78,7 +78,7 @@ impl RayIntersectable for Sphere {
     fn ray_intersect(&self, ray: Ray) -> Option<Vec3> {
         let l = self.center - ray.origin;
         let tca = l.dot(ray.direction());
-        if tca < 0.0 {
+        if tca.is_nan() || tca < 0.0 {
             return None;
         }
         let d_2 = l.length_squared() - tca.powi(2);
@@ -86,6 +86,9 @@ impl RayIntersectable for Sphere {
             return None;
         }
         let thc = (self.radius.powi(2) - d_2).sqrt();
+        if thc.is_nan() {
+            return None;
+        }
         Some(ray.lerp(tca - thc))
     }
 
@@ -132,14 +135,14 @@ impl RayIntersectable for Triangle {
         );
         let y = (x.1.cross(x.2), x.2.cross(x.0), x.0.cross(x.1));
 
-        if y.0.dot(y.1) <= 0.0 || y.0.dot(y.2) <= 0.0 {
+        if y.0.dot(y.1) < 0.0 || y.0.dot(y.2) < 0.0 {
             return None;
         }
         Some(projection)
     }
 
-    fn normal(&self, _intersection_point: Vec3) -> Vec3 {
-        (self.verticies[1] - self.verticies[0]).cross(self.verticies[2] - self.verticies[0])
+    fn normal(&self, _: Vec3) -> Vec3 {
+        self.normal
     }
 }
 

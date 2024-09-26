@@ -128,27 +128,27 @@ fn render_worker_inner(
             let reflect_vec = direction.reflect(normal_vec);
             let epsilon_factor = 1.0 / (scene.resolution.0.max(scene.resolution.1)) as f32;
             let mut rng = thread_rng();
-            // let reflect_color: Vec3 = {
-            //     let samples =
-            //         (3.0 * (scene.antialiasing as f32 * 2.0).powf(importance * 3.0)) as u32;
-            //     (1..samples)
-            //         .map(|_| Vec3::from_array(rng.sample(UnitSphere)))
-            //         .filter_map(|epsilon| {
-            //             render_worker_inner(
-            //                 &(collision + epsilon * epsilon_factor),
-            //                 &reflect_vec,
-            //                 scene,
-            //                 importance * material.reflect_rate,
-            //                 recursion_depth + 1,
-            //             )
-            //         })
-            //         .map(|p| p / samples as f32)
-            //         .sum::<Vec3>()
-            // };
+            let reflect_color: Vec3 = {
+                let samples =
+                    (3.0 * (scene.antialiasing as f32 * 2.0).powf(importance * 3.0)) as u32;
+                (1..samples)
+                    .map(|_| Vec3::from_array(rng.sample(UnitSphere)))
+                    .filter_map(|epsilon| {
+                        render_worker_inner(
+                            &(collision + epsilon * epsilon_factor),
+                            &reflect_vec,
+                            scene,
+                            importance * material.reflect_rate,
+                            recursion_depth + 1,
+                        )
+                    })
+                    .map(|p| p / samples as f32)
+                    .sum::<Vec3>()
+            };
 
             (material.color * (material.phong.0 + material.phong.1 * diffuse)
                 + Vec3::ONE * specular
-                /* + reflect_color * material.reflect_rate */)
+                + reflect_color * material.reflect_rate)
                 .clamp(Vec3::ZERO, Vec3::ONE)
         })
 }
@@ -162,7 +162,7 @@ impl Scene {
         let size = self.resolution.0 as usize * self.resolution.1 as usize;
         let canvas = (0..size)
             .into_par_iter()
-            // .progress_count(size as u64)
+            .progress_count(size as u64)
             .map_init(
                 || thread_rng(),
                 |rng, i| {

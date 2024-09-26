@@ -82,7 +82,13 @@ fn render_worker_inner(
         .fold(Option::None, |acc, e| {
             Some(acc.map_or(
                 e,
-                |acc: (f32, &Geometry, &Arc<Material>)| if !e.0.is_nan() && acc.0 > e.0 { e } else { acc },
+                |acc: (f32, &Geometry, &Arc<Material>)| {
+                    if !e.0.is_nan() && acc.0 > e.0 {
+                        e
+                    } else {
+                        acc
+                    }
+                },
             ))
         })
         .map(|(lerp, geo, material)| {
@@ -129,8 +135,7 @@ fn render_worker_inner(
             let epsilon_factor = 1.0 / (scene.resolution.0.max(scene.resolution.1)) as f32;
             let mut rng = thread_rng();
             let reflect_color: Vec3 = {
-                let samples =
-                    (3.0 * (scene.antialiasing as f32 * 2.0).powf(importance * 3.0)) as u32;
+                let samples = (2.0 * (importance + 0.4).tan().floor()) as u32;
                 (1..samples)
                     .map(|_| Vec3::from_array(rng.sample(UnitSphere)))
                     .filter_map(|epsilon| {

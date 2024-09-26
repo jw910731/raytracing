@@ -3,7 +3,9 @@ use std::{fs::File, io::Write, ptr, sync::Arc};
 
 use anyhow::Result;
 use glam::{vec3a as vec3, Vec3A as Vec3};
-use rand::{thread_rng, Rng};
+use indicatif::ParallelProgressIterator;
+use rand::prelude::*;
+use rand_distr::UnitSphere;
 use rayon::prelude::*;
 
 use crate::{
@@ -48,38 +50,30 @@ impl Scene {
     }
 }
 
-const MAX_RECURSION_DEPTH: u32 = 64;
-fn render_worker(
-    coord: Vec3,
-    eye: &Vec3,
-    background: &Vec3,
-    objs: &[(Geometry, Arc<Material>)],
-    light: &Vec3,
-) -> Vec3 {
-    render_worker_inner(coord, eye, background, objs, light, 0).unwrap_or(background.clone())
+const MAX_RECURSION_DEPTH: u32 = 4;
+fn render_worker(coordinate: &Vec3, scene: &Scene) -> Vec3 {
+    render_worker_inner(coordinate, &(coordinate - scene.eye), scene, 1.0, 0)
+        .unwrap_or(scene.background.clone())
 }
 fn render_worker_inner(
-    coord: Vec3,
-    eye: &Vec3,
-    background: &Vec3,
-    objs: &[(Geometry, Arc<Material>)],
-    light: &Vec3,
+    origin: &Vec3,
+    direction: &Vec3,
+    scene: &Scene,
+    importance: f32,
     recursion_depth: u32,
 ) -> Option<Vec3> {
-    if recursion_depth > MAX_RECURSION_DEPTH {
+    if importance < 1e-3 || recursion_depth > MAX_RECURSION_DEPTH {
         return None;
     }
 
-    let ray = Ray::new(coord, coord - eye);
-    objs.par_iter()
+    let ray = Ray::new(*origin, *direction);
+    scene
+        .scene_obj
+        .par_iter()
         .filter_map(|(obj, material)| {
             let collision = obj.ray_intersect(ray);
             let t = collision.map(|e| ray.solve(e));
-            if let Some(t) = t {
-                Some((t, obj, material))
-            } else {
-                None
-            }
+            t.map(|t| (t, obj, material))
         })
         .collect_vec_list()
         .into_iter()
@@ -92,33 +86,27 @@ fn render_worker_inner(
         })
         .map(|(lerp, geo, material)| {
             let collision = ray.lerp(lerp);
-            let eye_vec = eye - collision;
 
             let normal_vec = {
                 let tmp = geo.normal(collision).normalize();
-                tmp * (tmp.dot(eye_vec)).signum()
+                tmp * (tmp.dot(-direction)).signum()
             };
 
-            let light_direction = (light - collision).normalize();
-            let shadow = objs
+            let light_direction = (scene.light_position - collision).normalize();
+            let shadow = scene
+                .scene_obj
                 .par_iter()
-                .filter_map(|(obj, material)| {
+                .map(|(obj, _)| {
                     if ptr::eq(obj, geo) {
                         return None;
                     }
-                    let ray = Ray::new(collision, light_direction - collision);
-                    let collision = obj.ray_intersect(ray);
-                    let t = collision.map(|e| ray.solve(e));
-                    if let Some(t) = t {
-                        Some((t, obj, material))
-                    } else {
-                        None
-                    }
+                    let ray = Ray::new(collision, light_direction);
+                    let new_collision = obj.ray_intersect(ray);
+                    new_collision
+                        .filter(|c| c.distance(collision) > 1e-6)
+                        .filter(|c| ray.solve(*c) <= ray.solve(scene.light_position))
                 })
-                .collect_vec_list()
-                .into_iter()
-                .len()
-                > 0;
+                .any(|e| e.is_some());
 
             let diffuse = if !shadow {
                 normal_vec.dot(light_direction).max(0f32)
@@ -127,29 +115,40 @@ fn render_worker_inner(
             };
             let specular = if !shadow {
                 normal_vec
-                    .dot((light_direction.normalize() + eye_vec.normalize()).normalize())
+                    .dot((light_direction.normalize() + -direction.normalize()).normalize())
                     .max(0.0)
                     .powf(material.phong.3)
             } else {
                 0f32
             };
 
-            let reflect_vec = (-eye_vec).reflect(normal_vec);
-            let reflect_color = render_worker_inner(
-                collision,
-                &reflect_vec,
-                background,
-                objs,
-                light,
-                recursion_depth + 1,
-            );
+            let reflect_vec = direction.reflect(normal_vec);
+            let epsilon_factor = 0.0;
+            let reflect_color: Vec3 = {
+                let samples = (importance * (scene.antialiasing as f32 * 3.0).powi(3)) as u32;
+                (1..samples)
+                    .into_par_iter()
+                    .map_init(
+                        || thread_rng(),
+                        |rng, _| Vec3::from_array(rng.sample(UnitSphere)),
+                    )
+                    .filter_map(|epsilon| {
+                        render_worker_inner(
+                            &(collision + epsilon * epsilon_factor),
+                            &reflect_vec,
+                            scene,
+                            importance * material.reflect_rate,
+                            recursion_depth + 1,
+                        )
+                    })
+                    .map(|p| p / samples as f32)
+                    .sum::<Vec3>()
+            };
 
             (material.color * (material.phong.0 + material.phong.1 * diffuse)
                 + Vec3::ONE * specular
-                + reflect_color
-                    .map(|r| r * material.reflect_rate)
-                    .unwrap_or(Vec3::ZERO))
-            .clamp(Vec3::ZERO, Vec3::ONE)
+                + reflect_color * material.reflect_rate)
+                .clamp(Vec3::ZERO, Vec3::ONE)
         })
 }
 
@@ -162,6 +161,7 @@ impl Scene {
         let size = self.resolution.0 as usize * self.resolution.1 as usize;
         let canvas = (0..size)
             .into_par_iter()
+            .progress_count(size as u64)
             .map_init(
                 || thread_rng(),
                 |rng, i| {
@@ -188,13 +188,7 @@ impl Scene {
                                 + self.canvas_hv.normalize()
                                     * world_pixel_height
                                     * (r as f32 + subr);
-                            render_worker(
-                                pixel_coord,
-                                &self.eye,
-                                &self.background,
-                                &self.scene_obj,
-                                &self.light_position,
-                            )
+                            render_worker(&pixel_coord, self)
                         })
                         .map(|v| v / (self.antialiasing as f32))
                         .sum::<Vec3>()

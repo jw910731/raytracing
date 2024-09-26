@@ -133,6 +133,7 @@ impl RayIntersectable for Triangle {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 struct Point(Vec3);
 
 impl RayIntersectable for Point {
@@ -149,6 +150,7 @@ impl RayIntersectable for Point {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum Geometry {
     Sphere(Sphere),
     Triangle(Triangle),

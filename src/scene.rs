@@ -62,7 +62,7 @@ fn render_worker_inner(
     importance: f32,
     recursion_depth: u32,
 ) -> Option<Vec3> {
-    if importance < 1e-3 || recursion_depth > MAX_RECURSION_DEPTH {
+    if importance < 0.01 || recursion_depth > MAX_RECURSION_DEPTH {
         return None;
     }
 
@@ -123,15 +123,12 @@ fn render_worker_inner(
             };
 
             let reflect_vec = direction.reflect(normal_vec);
-            let epsilon_factor = 0.0;
+            let epsilon_factor = importance / (scene.resolution.0.max(scene.resolution.1)) as f32;
+            let mut rng = thread_rng();
             let reflect_color: Vec3 = {
                 let samples = (importance * (scene.antialiasing as f32 * 3.0).powi(3)) as u32;
                 (1..samples)
-                    .into_par_iter()
-                    .map_init(
-                        || thread_rng(),
-                        |rng, _| Vec3::from_array(rng.sample(UnitSphere)),
-                    )
+                    .map(|_| Vec3::from_array(rng.sample(UnitSphere)))
                     .filter_map(|epsilon| {
                         render_worker_inner(
                             &(collision + epsilon * epsilon_factor),

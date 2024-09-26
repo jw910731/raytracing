@@ -76,7 +76,17 @@ impl RayMarchable for Sphere {
 
 impl RayIntersectable for Sphere {
     fn ray_intersect(&self, ray: Ray) -> Option<Vec3> {
-        ray_marching(ray, self)
+        let l = self.center - ray.origin;
+        let tca = l.dot(ray.direction());
+        if tca < 0.0 {
+            return None;
+        }
+        let d_2 = l.length_squared() - tca.powi(2);
+        if d_2 < 0.0 {
+            return None;
+        }
+        let thc = (self.radius.powi(2) - d_2).sqrt();
+        Some(ray.lerp(tca - thc))
     }
 
     fn normal(&self, intersection_point: Vec3) -> Vec3 {

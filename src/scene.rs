@@ -135,7 +135,10 @@ fn render_worker_inner(
             let epsilon_factor = 1.0 / (scene.resolution.0.max(scene.resolution.1)) as f32;
             let mut rng = thread_rng();
             let reflect_color: Vec3 = {
-                let samples = (2.0 * (importance + 0.4).tan().floor()) as u32;
+                let samples = (((scene.antialiasing as f32 / 2.0).max(2.0)
+                    * (importance + 0.4).tan().floor()) as i32
+                    - recursion_depth as i32)
+                    .max(0) as u32;
                 (1..samples)
                     .map(|_| Vec3::from_array(rng.sample(UnitSphere)))
                     .filter_map(|epsilon| {
@@ -152,7 +155,7 @@ fn render_worker_inner(
             };
 
             (material.color * (material.phong.0 + material.phong.1 * diffuse)
-                + Vec3::ONE * specular
+                + vec3(0.5, 0.5, 0.5) * specular
                 + reflect_color * material.reflect_rate)
                 .clamp(Vec3::ZERO, Vec3::ONE)
         })

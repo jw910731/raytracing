@@ -20,13 +20,17 @@
                 }
             },
             "args": [
-                "hw1_input.txt",
+                "hw2_input.txt",
                 "output.ppm"
             ],
             "env": {
                 "RUST_BACKTRACE": "1",
+                "SERIALIZE": "1",
             },
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": [
+                "rust"
+            ]
         },
         {
             "type": "lldb",
@@ -45,7 +49,10 @@
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": [
+                "rust"
+            ]
         }
     ]
 }

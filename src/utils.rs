@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use glam::Vec3A as Vec3;
 
-use crate::geometry::{Geometry, Ray, RayMarchable, Sphere, Triangle};
+use crate::geometry::{Geometry, Sphere, Triangle};
 use glam::vec3a as vec3;
 
 use anyhow::{Error, Result};
@@ -11,25 +11,6 @@ pub struct Material {
     pub color: Vec3,
     pub phong: (f32, f32, f32, f32), // Ka, Kd, Ks, specular_exp
     pub reflect_rate: f32,
-}
-
-pub fn ray_marching<T: RayMarchable + ?Sized>(ray: Ray, obj: &T) -> Option<Vec3> {
-    let mut t = obj.distance(ray.lerp(0.0));
-    let max_dist = obj.distance(ray.lerp(0.0));
-    loop {
-        let next_pt = ray.lerp(t);
-        let new_dist = obj.distance(next_pt);
-        if new_dist < 1e-6 {
-            break;
-        }
-        if obj.distance(next_pt) > max_dist {
-            return None;
-        }
-        t += new_dist;
-    }
-
-    // Prevent ray from marching INTO the sphere, fix the answer to the surface of the sphere
-    Some(obj.fix_vec(ray.lerp(t)))
 }
 
 pub struct InputData {

@@ -1,7 +1,5 @@
 use glam::f32::Vec3A as Vec3;
 
-use crate::utils::ray_marching;
-
 #[derive(Clone, Copy, Debug)]
 pub struct Ray {
     pub origin: Vec3,
@@ -33,14 +31,6 @@ impl Ray {
     }
 }
 
-pub trait Distance {
-    fn distance(&self, v: Vec3) -> f32;
-}
-
-pub trait RayMarchable: Distance {
-    fn fix_vec(&self, v: Vec3) -> Vec3;
-}
-
 pub trait RayIntersectable {
     // Return intersection point in respect to the given ray
     fn ray_intersect(&self, ray: Ray) -> Option<Vec3>;
@@ -58,19 +48,6 @@ pub struct Sphere {
 impl Sphere {
     pub fn new(center: Vec3, radius: f32) -> Sphere {
         Sphere { center, radius }
-    }
-}
-
-impl Distance for Sphere {
-    fn distance(&self, vec: Vec3) -> f32 {
-        (vec - self.center).length() - self.radius
-    }
-}
-
-impl RayMarchable for Sphere {
-    fn fix_vec(&self, v: Vec3) -> Vec3 {
-        let fix_vec = v - self.center;
-        self.center + (fix_vec * (self.radius / fix_vec.length()))
     }
 }
 

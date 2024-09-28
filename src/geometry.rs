@@ -147,7 +147,7 @@ impl RayIntersectable for Triangle {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Point(Vec3);
+pub struct Point(Vec3);
 
 impl RayIntersectable for Point {
     fn ray_intersect(&self, ray: Ray) -> Option<Vec3> {

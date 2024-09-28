@@ -66,95 +66,124 @@ fn render_worker_inner(
         return None;
     }
 
+    let intersect = |ray| {
+        scene
+            .scene_obj
+            .iter()
+            .filter_map(|(obj, material)| {
+                let collision = obj.ray_intersect(ray);
+                assert!(collision.is_none() || !collision.unwrap_or(Vec3::NEG_INFINITY).is_nan());
+                let t = collision.map(|e| ray.solve(e));
+                t.map(|t| (t, obj, material))
+            })
+            .fold(Option::None, |acc, e| {
+                Some(acc.map_or(
+                    e,
+                    |acc: (f32, &Geometry, &Arc<Material>)| {
+                        if !e.0.is_nan() && acc.0 > e.0 {
+                            e
+                        } else {
+                            acc
+                        }
+                    },
+                ))
+            })
+    };
+
     let ray = Ray::new(*origin, *direction);
-    scene
-        .scene_obj
-        .iter().filter_map(|(obj, material)| {
-            let collision = obj.ray_intersect(ray);
-            assert!(collision.is_none() || !collision.unwrap_or(Vec3::NEG_INFINITY).is_nan());
-            let t = collision.map(|e| ray.solve(e));
-            t.map(|t| (t, obj, material))
-        })
-        .fold(Option::None, |acc, e| {
-            Some(acc.map_or(
-                e,
-                |acc: (f32, &Geometry, &Arc<Material>)| {
-                    if !e.0.is_nan() && acc.0 > e.0 {
-                        e
-                    } else {
-                        acc
-                    }
-                },
-            ))
-        })
-        .map(|(lerp, geo, material)| {
-            let collision = ray.lerp(lerp);
+    intersect(ray).map(|(lerp, geo, material)| {
+        let collision = ray.lerp(lerp);
 
-            let normal_vec = {
-                let tmp = geo.normal(collision).normalize();
-                tmp * (tmp.dot(-direction)).signum()
-            };
+        let normal_vec = {
+            let tmp = geo.normal(collision).normalize();
+            tmp * (tmp.dot(-direction)).signum()
+        };
 
-            assert!(!normal_vec.is_nan());
+        assert!(!normal_vec.is_nan());
 
-            let light_direction = (scene.light_position - collision).normalize();
-            let shadow = scene
-                .scene_obj
+        let light_direction = (scene.light_position - collision).normalize();
+        let shadow = scene
+            .scene_obj
+            .iter()
+            .map(|(obj, _)| {
+                if ptr::eq(obj, geo) {
+                    return None;
+                }
+                let ray = Ray::new(collision, light_direction);
+                let new_collision = obj.ray_intersect(ray);
+                new_collision
+                    .filter(|c| c.distance(collision) > 1e-6)
+                    .filter(|c| ray.solve(*c) <= ray.solve(scene.light_position))
+            })
+            .any(|e| e.is_some());
+
+        let diffuse = if !shadow {
+            normal_vec.dot(light_direction).max(0f32)
+        } else {
+            0f32
+        };
+        let specular = if !shadow {
+            normal_vec
+                .dot((light_direction.normalize() + -direction.normalize()).normalize())
+                .max(0.0)
+                .powf(material.phong.3)
+        } else {
+            0f32
+        };
+
+        let reflect_vec = direction.reflect(normal_vec);
+        let epsilon_factor = 1.0 / (scene.resolution.0.max(scene.resolution.1)) as f32;
+        let mut rng = thread_rng();
+        let reflect_color: Vec3 = {
+            // estimate sample count
+            let samples = (((scene.antialiasing as f32 / 2.0).max(2.0)
+                * (importance + 0.4).tan().floor()) as i32
+                - recursion_depth as i32)
+                .max(0) as u32;
+            let rand_vecs = (1..samples)
+                .map(|_| Vec3::from_array(rng.sample(UnitSphere)) * epsilon_factor + collision)
+                .collect::<Box<[_]>>();
+            let reflections = rand_vecs
                 .iter()
-                .map(|(obj, _)| {
-                    if ptr::eq(obj, geo) {
-                        return None;
-                    }
-                    let ray = Ray::new(collision, light_direction);
-                    let new_collision = obj.ray_intersect(ray);
-                    new_collision
-                        .filter(|c| c.distance(collision) > 1e-6)
-                        .filter(|c| ray.solve(*c) <= ray.solve(scene.light_position))
+                .filter_map(|rv| {
+                    let ray = Ray::new(*rv, reflect_vec);
+                    let ans = intersect(ray);
+                    ans.map(|s| (ray.lerp(s.0), geo))
                 })
-                .any(|e| e.is_some());
+                .collect::<Box<[_]>>();
+            let reflection_mass_center = reflections.iter().fold(Vec3::ZERO, |acc, (v, _)| acc + v)
+                / reflections.len() as f32;
+            let difference = reflections
+                .iter()
+                .map(|(v, _)| reflection_mass_center.distance(*v))
+                .fold(Vec3::ZERO, |acc, v| acc + v)
+                .element_sum();
+            // real sample count
+            let samples = (difference / (3.0 * epsilon_factor)).min(samples as f32) as u32;
+            (1..samples)
+                .into_par_iter()
+                .map_init(
+                    || thread_rng(),
+                    |rng, _| Vec3::from_array(rng.sample(UnitSphere)) * epsilon_factor + collision,
+                )
+                .filter_map(|rv| {
+                    render_worker_inner(
+                        &rv,
+                        &reflect_vec,
+                        scene,
+                        importance * material.reflect_rate,
+                        recursion_depth + 1,
+                    )
+                })
+                .map(|p| p / samples as f32)
+                .sum::<Vec3>()
+        };
 
-            let diffuse = if !shadow {
-                normal_vec.dot(light_direction).max(0f32)
-            } else {
-                0f32
-            };
-            let specular = if !shadow {
-                normal_vec
-                    .dot((light_direction.normalize() + -direction.normalize()).normalize())
-                    .max(0.0)
-                    .powf(material.phong.3)
-            } else {
-                0f32
-            };
-
-            let reflect_vec = direction.reflect(normal_vec);
-            let epsilon_factor = 1.0 / (scene.resolution.0.max(scene.resolution.1)) as f32;
-            let reflect_color: Vec3 = {
-                let samples = (((scene.antialiasing as f32 / 2.0).max(2.0)
-                    * (importance + 0.4).tan().floor()) as i32
-                    - recursion_depth as i32)
-                    .max(0) as u32;
-                (1..samples)
-                    .into_par_iter()
-                    .map_init( ||thread_rng(), |rng, _| Vec3::from_array(rng.sample(UnitSphere)))
-                    .filter_map(|epsilon| {
-                        render_worker_inner(
-                            &(collision + epsilon * epsilon_factor),
-                            &reflect_vec,
-                            scene,
-                            importance * material.reflect_rate,
-                            recursion_depth + 1,
-                        )
-                    })
-                    .map(|p| p / samples as f32)
-                    .sum::<Vec3>()
-            };
-
-            (material.color * (material.phong.0 + material.phong.1 * diffuse)
-                + vec3(0.5, 0.5, 0.5) * specular
-                + reflect_color * material.reflect_rate)
-                .clamp(Vec3::ZERO, Vec3::ONE)
-        })
+        (material.color * (material.phong.0 + material.phong.1 * diffuse)
+            + vec3(0.5, 0.5, 0.5) * specular
+            + reflect_color * material.reflect_rate)
+            .clamp(Vec3::ZERO, Vec3::ONE)
+    })
 }
 
 impl Scene {

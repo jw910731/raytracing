@@ -69,16 +69,12 @@ fn render_worker_inner(
     let ray = Ray::new(*origin, *direction);
     scene
         .scene_obj
-        .par_iter()
-        .filter_map(|(obj, material)| {
+        .iter().filter_map(|(obj, material)| {
             let collision = obj.ray_intersect(ray);
             assert!(collision.is_none() || !collision.unwrap_or(Vec3::NEG_INFINITY).is_nan());
             let t = collision.map(|e| ray.solve(e));
             t.map(|t| (t, obj, material))
         })
-        .collect_vec_list()
-        .into_iter()
-        .flatten()
         .fold(Option::None, |acc, e| {
             Some(acc.map_or(
                 e,
@@ -104,7 +100,7 @@ fn render_worker_inner(
             let light_direction = (scene.light_position - collision).normalize();
             let shadow = scene
                 .scene_obj
-                .par_iter()
+                .iter()
                 .map(|(obj, _)| {
                     if ptr::eq(obj, geo) {
                         return None;
@@ -133,14 +129,14 @@ fn render_worker_inner(
 
             let reflect_vec = direction.reflect(normal_vec);
             let epsilon_factor = 1.0 / (scene.resolution.0.max(scene.resolution.1)) as f32;
-            let mut rng = thread_rng();
             let reflect_color: Vec3 = {
                 let samples = (((scene.antialiasing as f32 / 2.0).max(2.0)
                     * (importance + 0.4).tan().floor()) as i32
                     - recursion_depth as i32)
                     .max(0) as u32;
                 (1..samples)
-                    .map(|_| Vec3::from_array(rng.sample(UnitSphere)))
+                    .into_par_iter()
+                    .map_init( ||thread_rng(), |rng, _| Vec3::from_array(rng.sample(UnitSphere)))
                     .filter_map(|epsilon| {
                         render_worker_inner(
                             &(collision + epsilon * epsilon_factor),

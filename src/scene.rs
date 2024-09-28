@@ -62,7 +62,7 @@ fn render_worker_inner(
     importance: f32,
     recursion_depth: u32,
 ) -> Option<Vec3> {
-    if importance < (1.0 / 256.0) || recursion_depth > MAX_RECURSION_DEPTH {
+    if importance < (1.0 / 512.0) || recursion_depth > MAX_RECURSION_DEPTH {
         return None;
     }
 

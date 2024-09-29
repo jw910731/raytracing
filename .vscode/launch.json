@@ -20,7 +20,7 @@
                 }
             },
             "args": [
-                "hw2_input.txt",
+                "hw2_input2.txt",
                 "output.ppm"
             ],
             "env": {

@@ -5,7 +5,7 @@ use anyhow::Result;
 use glam::{vec3a as vec3, Vec3A as Vec3};
 use indicatif::ParallelProgressIterator;
 use rand::prelude::*;
-use rand_distr::StandardNormal;
+use rand_distr::UnitCircle;
 use rayon::prelude::*;
 
 use crate::{
@@ -50,9 +50,9 @@ impl Scene {
     }
 }
 
-const MAX_RECURSION_DEPTH: u32 = 64;
+const MAX_RECURSION_DEPTH: u32 = 8;
 fn render_worker(coordinate: &Vec3, scene: &Scene) -> Vec3 {
-    render_worker_inner(coordinate, &(coordinate - scene.eye), scene, 1.0, 0)
+    render_worker_inner(coordinate, &(coordinate - scene.eye), scene, 1.0, 0, None)
         .unwrap_or(scene.background.clone())
 }
 fn render_worker_inner(
@@ -61,15 +61,17 @@ fn render_worker_inner(
     scene: &Scene,
     importance: f32,
     recursion_depth: u32,
+    prev_obj: Option<&Geometry>,
 ) -> Option<Vec3> {
-    if importance < (1.0 / 512.0) || recursion_depth > MAX_RECURSION_DEPTH {
+    if importance < (1.0 / 256.0) || recursion_depth > MAX_RECURSION_DEPTH {
         return None;
     }
 
-    let intersect = |ray| {
+    let intersect = |ray, repel: Option<&Geometry>| {
         scene
             .scene_obj
             .iter()
+            .filter(|(geo, _)| !repel.map(|r| ptr::eq(geo, r)).unwrap_or_default())
             .filter_map(|(obj, material)| {
                 let collision = obj.ray_intersect(ray);
                 assert!(collision.is_none() || !collision.map(|c| c.is_nan()).unwrap_or_default());
@@ -91,13 +93,14 @@ fn render_worker_inner(
     };
 
     let ray = Ray::new(*origin, *direction);
-    intersect(ray).map(|(lerp, geo, material)| {
+    intersect(ray, prev_obj).map(|(lerp, geo, material)| {
         let collision = ray.lerp(lerp);
 
         let normal_vec = {
             let tmp = geo.normal(collision).normalize();
             tmp * (tmp.dot(-direction)).signum()
         };
+        let orthos = normal_vec.any_orthonormal_pair();
 
         assert!(!normal_vec.is_nan());
 
@@ -138,15 +141,14 @@ fn render_worker_inner(
             let samples = (((scene.antialiasing as f32 / 2.0).max(1.0)
                 * (importance + 0.4).tan().floor()) as i32
                 - recursion_depth as i32)
-                .max(0) as u32;
+                .max(1) as u32;
             (0..samples)
                 .into_par_iter()
                 .map_init(
                     || thread_rng(),
                     |rng, _| {
-                        (normal_vec * rng.sample::<f32, _>(StandardNormal).abs()).normalize()
-                            * epsilon_factor
-                            + collision
+                        let d = rng.sample::<[f32; 2], _>(UnitCircle);
+                        (d[0] * orthos.0 + d[1] * orthos.1) * epsilon_factor + collision
                     },
                 )
                 .filter_map(|rv| {
@@ -156,6 +158,7 @@ fn render_worker_inner(
                         scene,
                         importance * material.reflect_rate,
                         recursion_depth + 1,
+                        Some(geo),
                     )
                 })
                 .map(|p| p / samples as f32)

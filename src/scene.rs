@@ -138,10 +138,7 @@ fn render_worker_inner(
         let epsilon_factor = 1.0 / (2 * scene.resolution.0.max(scene.resolution.1)) as f32;
         let reflect_color: Vec3 = {
             // estimate sample count
-            let samples = (((scene.antialiasing as f32 / 2.0).max(1.0)
-                * (importance + 0.4).tan().floor()) as i32
-                - recursion_depth as i32)
-                .max(1) as u32;
+            let samples = ((importance * (MAX_RECURSION_DEPTH - recursion_depth) as f32) as u32).max(1);
             (0..samples)
                 .into_par_iter()
                 .map_init(

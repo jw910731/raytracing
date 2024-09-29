@@ -5,7 +5,7 @@ use anyhow::Result;
 use glam::{vec3a as vec3, Vec3A as Vec3};
 use indicatif::ParallelProgressIterator;
 use rand::prelude::*;
-use rand_distr::UnitSphere;
+use rand_distr::StandardNormal;
 use rayon::prelude::*;
 
 use crate::{
@@ -50,7 +50,7 @@ impl Scene {
     }
 }
 
-const MAX_RECURSION_DEPTH: u32 = 4;
+const MAX_RECURSION_DEPTH: u32 = 64;
 fn render_worker(coordinate: &Vec3, scene: &Scene) -> Vec3 {
     render_worker_inner(coordinate, &(coordinate - scene.eye), scene, 1.0, 0)
         .unwrap_or(scene.background.clone())
@@ -72,7 +72,7 @@ fn render_worker_inner(
             .iter()
             .filter_map(|(obj, material)| {
                 let collision = obj.ray_intersect(ray);
-                assert!(collision.is_none() || !collision.unwrap_or(Vec3::NEG_INFINITY).is_nan());
+                assert!(collision.is_none() || !collision.map(|c| c.is_nan()).unwrap_or_default());
                 let t = collision.map(|e| ray.solve(e));
                 t.map(|t| (t, obj, material))
             })
@@ -132,39 +132,22 @@ fn render_worker_inner(
         };
 
         let reflect_vec = direction.reflect(normal_vec);
-        let epsilon_factor = 1.0 / (scene.resolution.0.max(scene.resolution.1)) as f32;
-        let mut rng = thread_rng();
+        let epsilon_factor = 1.0 / (2 * scene.resolution.0.max(scene.resolution.1)) as f32;
         let reflect_color: Vec3 = {
             // estimate sample count
-            let samples = (((scene.antialiasing as f32 / 2.0).max(2.0)
+            let samples = (((scene.antialiasing as f32 / 2.0).max(1.0)
                 * (importance + 0.4).tan().floor()) as i32
                 - recursion_depth as i32)
                 .max(0) as u32;
-            let rand_vecs = (1..samples)
-                .map(|_| Vec3::from_array(rng.sample(UnitSphere)) * epsilon_factor + collision)
-                .collect::<Box<[_]>>();
-            let reflections = rand_vecs
-                .iter()
-                .filter_map(|rv| {
-                    let ray = Ray::new(*rv, reflect_vec);
-                    let ans = intersect(ray);
-                    ans.map(|s| (ray.lerp(s.0), geo))
-                })
-                .collect::<Box<[_]>>();
-            let reflection_mass_center = reflections.iter().fold(Vec3::ZERO, |acc, (v, _)| acc + v)
-                / reflections.len() as f32;
-            let difference = reflections
-                .iter()
-                .map(|(v, _)| reflection_mass_center.distance(*v))
-                .fold(Vec3::ZERO, |acc, v| acc + v)
-                .element_sum();
-            // real sample count
-            let samples = (difference / (3.0 * epsilon_factor)).min(samples as f32) as u32;
-            (1..samples)
+            (0..samples)
                 .into_par_iter()
                 .map_init(
                     || thread_rng(),
-                    |rng, _| Vec3::from_array(rng.sample(UnitSphere)) * epsilon_factor + collision,
+                    |rng, _| {
+                        (normal_vec * rng.sample::<f32, _>(StandardNormal).abs()).normalize()
+                            * epsilon_factor
+                            + collision
+                    },
                 )
                 .filter_map(|rv| {
                     render_worker_inner(
@@ -179,8 +162,8 @@ fn render_worker_inner(
                 .sum::<Vec3>()
         };
 
-        (material.color * (material.phong.0 + material.phong.1 * diffuse)
-            + vec3(0.5, 0.5, 0.5) * specular
+        ((material.color * (material.phong.0 + material.phong.1 * diffuse) + Vec3::ONE * specular)
+            * (1.0 - material.reflect_rate)
             + reflect_color * material.reflect_rate)
             .clamp(Vec3::ZERO, Vec3::ONE)
     })

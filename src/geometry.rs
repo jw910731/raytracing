@@ -1,7 +1,5 @@
 use glam::f32::Vec3A as Vec3;
 
-use crate::utils::ray_marching;
-
 #[derive(Clone, Copy, Debug)]
 pub struct Ray {
     pub origin: Vec3,
@@ -33,16 +31,12 @@ impl Ray {
     }
 }
 
-pub trait Distance {
-    fn distance(&self, v: Vec3) -> f32;
-}
-
-pub trait RayMarchable: Distance {
-    fn fix_vec(&self, v: Vec3) -> Vec3;
-}
-
 pub trait RayIntersectable {
+    // Return intersection point in respect to the given ray
     fn ray_intersect(&self, ray: Ray) -> Option<Vec3>;
+
+    // Get normal vector at the intersection point
+    fn normal(&self, intersection_point: Vec3) -> Vec3;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -57,22 +51,26 @@ impl Sphere {
     }
 }
 
-impl Distance for Sphere {
-    fn distance(&self, vec: Vec3) -> f32 {
-        (vec - self.center).length() - self.radius
-    }
-}
-
-impl RayMarchable for Sphere {
-    fn fix_vec(&self, v: Vec3) -> Vec3 {
-        let fix_vec = v - self.center;
-        self.center + (fix_vec * (self.radius / fix_vec.length()))
-    }
-}
-
 impl RayIntersectable for Sphere {
     fn ray_intersect(&self, ray: Ray) -> Option<Vec3> {
-        ray_marching(ray, self)
+        let l = self.center - ray.origin;
+        let tca = l.dot(ray.direction());
+        if tca.is_nan() || tca < 0.0 {
+            return None;
+        }
+        let d_2 = l.length_squared() - tca.powi(2);
+        if d_2 < 0.0 {
+            return None;
+        }
+        let thc = (self.radius.powi(2) - d_2).sqrt();
+        if thc.is_nan() {
+            return None;
+        }
+        Some(ray.lerp(tca - thc))
+    }
+
+    fn normal(&self, intersection_point: Vec3) -> Vec3 {
+        (self.center - intersection_point).normalize()
     }
 }
 
@@ -114,16 +112,39 @@ impl RayIntersectable for Triangle {
         );
         let y = (x.1.cross(x.2), x.2.cross(x.0), x.0.cross(x.1));
 
-        if y.0.dot(y.1) <= 0.0  || y.0.dot(y.2) <= 0.0 {
+        if y.0.dot(y.1) < 0.0 || y.0.dot(y.2) < 0.0 {
             return None;
         }
         Some(projection)
     }
+
+    fn normal(&self, _: Vec3) -> Vec3 {
+        self.normal
+    }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Point(Vec3);
+
+impl RayIntersectable for Point {
+    fn ray_intersect(&self, ray: Ray) -> Option<Vec3> {
+        if ray.direction().dot((self.0 - ray.origin).normalize()) - 1.0 < 1e-6 {
+            Some(ray.lerp(ray.solve(self.0)))
+        } else {
+            None
+        }
+    }
+
+    fn normal(&self, _intersection_point: Vec3) -> Vec3 {
+        Vec3::ZERO
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum Geometry {
     Sphere(Sphere),
     Triangle(Triangle),
+    Point(Point),
 }
 
 impl RayIntersectable for Geometry {
@@ -131,6 +152,15 @@ impl RayIntersectable for Geometry {
         match self {
             Geometry::Sphere(s) => s.ray_intersect(ray),
             Geometry::Triangle(t) => t.ray_intersect(ray),
+            Geometry::Point(p) => p.ray_intersect(ray),
+        }
+    }
+
+    fn normal(&self, intersection_point: Vec3) -> Vec3 {
+        match self {
+            Geometry::Sphere(s) => s.normal(intersection_point),
+            Geometry::Triangle(t) => t.normal(intersection_point),
+            Geometry::Point(p) => p.normal(intersection_point),
         }
     }
 }

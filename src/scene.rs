@@ -1,23 +1,28 @@
 use core::f32;
-use std::{fs::File, io::Write};
+use std::{fs::File, io::Write, ptr, sync::Arc};
 
 use anyhow::Result;
 use glam::{vec3a as vec3, Vec3A as Vec3};
-use rand::{thread_rng, Rng};
+use indicatif::ParallelProgressIterator;
+use rand::prelude::*;
+use rand_distr::UnitCircle;
 use rayon::prelude::*;
 
 use crate::{
     geometry::{Geometry, Ray, RayIntersectable},
-    utils::InputData,
+    utils::{InputData, Material},
 };
 
 pub struct Scene {
     pub eye: Vec3,
-    pub img_coord: [Vec3; 4], // UL, UR, LL, LR
+    canvas_wv: Vec3,
+    canvas_hv: Vec3,
+    canvas_corner: Vec3,
     pub resolution: (i32, i32),
-    pub scene_obj: Vec<Geometry>,
+    pub scene_obj: Box<[(Geometry, Arc<Material>)]>,
     pub background: Vec3,
     pub antialiasing: u8,
+    pub light_position: Vec3,
 }
 
 impl Scene {
@@ -25,58 +30,155 @@ impl Scene {
         Scene::new_with_antialiasing(data, 1)
     }
     pub fn new_with_antialiasing(data: InputData, antialiasing: u8) -> Scene {
+        let center = data.eye + data.view_direction.normalize();
+        let width = (data.fov / 2.0).to_radians().tan() * data.view_direction.length() * 2.0;
+        let height = width * (data.resolution.1 as f32 / data.resolution.0 as f32);
+        let unit_up = data.up_direction.normalize();
+        let unit_left = unit_up.cross(data.view_direction).normalize();
+        let corner = center + unit_up * (height / 2.0) + unit_left * (width / 2.0);
         Scene {
             eye: data.eye,
-            img_coord: data.img_coord,
+            canvas_corner: corner,
+            canvas_hv: (-unit_up) * height,
+            canvas_wv: (-unit_left) * width,
             resolution: data.resolution,
-            scene_obj: data.objects,
+            scene_obj: Box::from(data.objects),
             background: vec3(0f32, 0f32, 0f32),
+            light_position: data.light,
             antialiasing,
         }
     }
 }
 
-fn render_worker(coord: Vec3, eye: &Vec3, background: &Vec3, objs: &Vec<Geometry>) -> Vec3 {
-    let ray = Ray::new(coord, coord - eye);
-    let output = if let Some((lerp, _geo)) = objs
-        .par_iter()
-        .filter_map(|obj| {
-            let collision = obj.ray_intersect(ray);
-            let t = collision.map(|e| ray.solve(e));
-            if let Some(t) = t {
-                Some((t, obj))
-            } else {
-                None
-            }
-        })
-        .collect_vec_list()
-        .into_iter()
-        .flatten()
-        .fold(
-            Option::None,
-            |acc, e| Some(acc.map_or(e, |acc: (f32, &Geometry)| if acc.0 > e.0 { e } else { acc })),
-        ) {
-        ray.lerp(lerp)
-    } else {
-        background.clone()
+const MAX_RECURSION_DEPTH: u32 = 8;
+fn render_worker(coordinate: &Vec3, scene: &Scene) -> Vec3 {
+    render_worker_inner(coordinate, &(coordinate - scene.eye), scene, 1.0, 0, None)
+        .unwrap_or(scene.background.clone())
+}
+fn render_worker_inner(
+    origin: &Vec3,
+    direction: &Vec3,
+    scene: &Scene,
+    importance: f32,
+    recursion_depth: u32,
+    prev_obj: Option<&Geometry>,
+) -> Option<Vec3> {
+    if importance < (1.0 / 256.0) || recursion_depth > MAX_RECURSION_DEPTH {
+        return None;
+    }
+
+    let intersect = |ray, repel: Option<&Geometry>| {
+        scene
+            .scene_obj
+            .iter()
+            .filter(|(geo, _)| !repel.map(|r| ptr::eq(geo, r)).unwrap_or_default())
+            .filter_map(|(obj, material)| {
+                let collision = obj.ray_intersect(ray);
+                assert!(collision.is_none() || !collision.map(|c| c.is_nan()).unwrap_or_default());
+                let t = collision.map(|e| ray.solve(e));
+                t.map(|t| (t, obj, material))
+            })
+            .fold(Option::None, |acc, e| {
+                Some(acc.map_or(
+                    e,
+                    |acc: (f32, &Geometry, &Arc<Material>)| {
+                        if !e.0.is_nan() && acc.0 > e.0 {
+                            e
+                        } else {
+                            acc
+                        }
+                    },
+                ))
+            })
     };
-    output
+
+    let ray = Ray::new(*origin, *direction);
+    intersect(ray, prev_obj).map(|(lerp, geo, material)| {
+        let collision = ray.lerp(lerp);
+
+        let normal_vec = {
+            let tmp = geo.normal(collision).normalize();
+            tmp * (tmp.dot(-direction)).signum()
+        };
+        let orthos = normal_vec.any_orthonormal_pair();
+
+        assert!(!normal_vec.is_nan());
+
+        let light_direction = (scene.light_position - collision).normalize();
+        let shadow = scene
+            .scene_obj
+            .iter()
+            .map(|(obj, _)| {
+                if ptr::eq(obj, geo) {
+                    return None;
+                }
+                let ray = Ray::new(collision, light_direction);
+                let new_collision = obj.ray_intersect(ray);
+                new_collision
+                    .filter(|c| c.distance(collision) > 1e-6)
+                    .filter(|c| ray.solve(*c) <= ray.solve(scene.light_position))
+            })
+            .any(|e| e.is_some());
+
+        let diffuse = if !shadow {
+            normal_vec.dot(light_direction).max(0f32)
+        } else {
+            0f32
+        };
+        let specular = if !shadow {
+            normal_vec
+                .dot((light_direction.normalize() + -direction.normalize()).normalize())
+                .max(0.0)
+                .powf(material.phong.3)
+        } else {
+            0f32
+        };
+
+        let reflect_vec = direction.reflect(normal_vec);
+        let epsilon_factor = 1.0 / (2 * scene.resolution.0.max(scene.resolution.1)) as f32;
+        let reflect_color: Vec3 = {
+            // estimate sample count
+            let samples = ((importance * (MAX_RECURSION_DEPTH - recursion_depth) as f32) as u32).max(1);
+            (0..samples)
+                .into_par_iter()
+                .map_init(
+                    || thread_rng(),
+                    |rng, _| {
+                        let d = rng.sample::<[f32; 2], _>(UnitCircle);
+                        (d[0] * orthos.0 + d[1] * orthos.1) * epsilon_factor + collision
+                    },
+                )
+                .filter_map(|rv| {
+                    render_worker_inner(
+                        &rv,
+                        &reflect_vec,
+                        scene,
+                        importance * material.reflect_rate,
+                        recursion_depth + 1,
+                        Some(geo),
+                    )
+                })
+                .map(|p| p / samples as f32)
+                .sum::<Vec3>()
+        };
+
+        ((material.color * (material.phong.0 + material.phong.1 * diffuse) + Vec3::ONE * specular)
+            * (1.0 - material.reflect_rate)
+            + reflect_color * material.reflect_rate)
+            .clamp(Vec3::ZERO, Vec3::ONE)
+    })
 }
 
 impl Scene {
     pub fn render(&mut self, file: &mut File) -> Result<()> {
         file.write("P6\n".as_bytes())?;
         file.write(format!("{} {}\n255\n", self.resolution.0, self.resolution.1).as_bytes())?;
-        let (wv, hv) = (
-            self.img_coord[1] - self.img_coord[0],
-            self.img_coord[2] - self.img_coord[0],
-        );
-        let world_pixel_width = wv.length() / self.resolution.0 as f32;
-        let world_pixel_height = hv.length() / self.resolution.1 as f32;
-
+        let world_pixel_width = self.canvas_wv.length() / self.resolution.0 as f32;
+        let world_pixel_height = self.canvas_hv.length() / self.resolution.1 as f32;
         let size = self.resolution.0 as usize * self.resolution.1 as usize;
         let canvas = (0..size)
             .into_par_iter()
+            .progress_count(size as u64)
             .map_init(
                 || thread_rng(),
                 |rng, i| {
@@ -96,17 +198,21 @@ impl Scene {
                                     (rng.gen_range(0.0..1.0), rng.gen_range(0.0..1.0))
                                 }
                             };
-                            let pixel_coord = self.img_coord[0]
-                                + wv.normalize() * world_pixel_width * (c as f32 + subc)
-                                + hv.normalize() * world_pixel_height * (r as f32 + subr);
-                            render_worker(pixel_coord, &self.eye, &self.background, &self.scene_obj)
+                            let pixel_coord = self.canvas_corner
+                                + self.canvas_wv.normalize()
+                                    * world_pixel_width
+                                    * (c as f32 + subc)
+                                + self.canvas_hv.normalize()
+                                    * world_pixel_height
+                                    * (r as f32 + subr);
+                            render_worker(&pixel_coord, self)
                         })
                         .map(|v| v / (self.antialiasing as f32))
                         .sum::<Vec3>()
                 },
             )
             .flat_map(|pixel| {
-                let result = (255.0 * (pixel + 1.0) / 2.0).round();
+                let result = (255.0 * pixel).round();
                 [result.x as u8, result.y as u8, result.z as u8]
             })
             .collect::<Vec<_>>();

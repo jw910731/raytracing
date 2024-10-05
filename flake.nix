@@ -4,8 +4,11 @@
     systems.url = "github:nix-systems/default";
     devenv.url = "github:cachix/devenv";
     devenv.inputs.nixpkgs.follows = "nixpkgs";
-    fenix.url = "github:nix-community/fenix";
-    fenix.inputs = { nixpkgs.follows = "nixpkgs"; };
+    
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   nixConfig = {
@@ -13,7 +16,7 @@
     extra-substituters = "https://devenv.cachix.org";
   };
 
-  outputs = { self, nixpkgs, devenv, systems, fenix, ... } @ inputs:
+  outputs = { self, nixpkgs, devenv, systems, rust-overlay, ... } @ inputs:
     let
       forEachSystem = nixpkgs.lib.genAttrs (import systems);
     in
@@ -25,7 +28,10 @@
       devShells = forEachSystem
         (system:
           let
-            pkgs = nixpkgs.legacyPackages.${system};
+            overlays = [ (import rust-overlay) ];
+            pkgs = import nixpkgs {
+              inherit system overlays;
+            };
             lib = pkgs.lib;
           in
           {
@@ -33,8 +39,9 @@
               inherit inputs pkgs;
               modules = [
                 ({config, ...}: let 
-                  channel = "stable";
-                  toolchain = fenix.packages.${pkgs.stdenv.system}.${channel}.toolchain;
+                  toolchain = (pkgs.rust-bin.nightly."2023-05-27".default.override {
+                      extensions = [ "rust-src" "rustc-dev" "llvm-tools" ];
+                    });
                   cargo-instruments =  (pkgs.makeRustPlatform {
                     cargo = toolchain;
                     rustc = toolchain;
@@ -59,13 +66,17 @@
                   };
                 in{
                   # https://devenv.sh/reference/options/
-                  packages = [  ] ++ lib.optionals pkgs.stdenv.isDarwin [
-                    cargo-instruments
+                  packages = [
+                    toolchain
+                    pkgs.zlib
+                  ] ++ lib.optionals pkgs.stdenv.isDarwin [
+                    # cargo-instruments
+                    pkgs.darwin.apple_sdk.frameworks.Security
+                    pkgs.darwin.apple_sdk.frameworks.QuartzCore
+                    pkgs.darwin.apple_sdk.frameworks.AppKit
                   ];
-                  languages.rust = {
-                    inherit toolchain channel;
-                    enable = true;
-                  };
+
+                  env.CFLAGS = lib.optionalString pkgs.stdenv.isDarwin "-iframework ${config.devenv.profile}/Library/Frameworks";
                 })
               ];
             };

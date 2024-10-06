@@ -1,0 +1,26 @@
+{
+    "rust-analyzer.cargo.buildScripts.overrideCommand": [
+        "env",
+        "RUST_ANALYZER_CHECK=1",
+        "cargo",
+        "check",
+        "--quiet",
+        "--workspace",
+        "--message-format=json",
+        "--all-targets"
+    ],
+    "rust-analyzer.check.overrideCommand": [
+        "env",
+        "RUST_ANALYZER_CHECK=1",
+        "cargo",
+        "check",
+        "--quiet",
+        "--workspace",
+        "--message-format=json",
+        "--all-targets"
+    ],
+    "rust-analyzer.linkedProjects": [
+        "./kernels/Cargo.toml",
+        "./Cargo.toml"
+    ],
+}

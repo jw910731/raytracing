@@ -3,5 +3,3 @@
 .direnv
 *.txt
 *.ppm
-.vscode
-!.vscode/launch.json

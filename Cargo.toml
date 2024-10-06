@@ -16,14 +16,18 @@ kernels = { path = "kernels" }
 bytemuck = { version = "1.13.1", features = ["derive"] }
 glam = { version = "0.29.0", features = ["bytemuck", "libm"] }
 wgpu = { version = "0.19.4", features = ["spirv"] }
+tokio = { version = "1.40.0", features = ["full"] }
 
 [dev-dependencies]
 anyhow = { version = "1.0.89", features = ["backtrace"] }
 
 [build-dependencies]
-spirv-builder = {version = "0.9.0", features = ["watch"]}
+spirv-builder = { version = "0.9.0", features = ["watch"] }
 
-# [profile.release]
-# lto = "fat"
-# opt-level = 3
-# codegen-units = 1
+# Compile build-dependencies in release mode with
+# the same settings as regular dependencies.
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 16
+[profile.dev.build-override]
+opt-level = 3

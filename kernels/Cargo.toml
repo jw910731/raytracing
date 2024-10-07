@@ -8,7 +8,6 @@ crate-type = ["dylib"]
 
 [dependencies]
 shared_structs = { path = "../shared_structs" }
+rand = { version = "0.8.5", default-features = false, features = ["small_rng"] }
+rand_distr = { version = "0.4.3", default-features = false }
 spirv-std = "0.9.0"
-
-[target.'cfg(not(target_arch = "spirv"))'.dependencies]
-rayon = "1.5"

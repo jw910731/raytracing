@@ -13,6 +13,10 @@ use crate::{
     utils::{InputData, Material},
 };
 
+const FOCAL_LEN: f32 = 1.5; // 15 mm
+const APERTURE: f32 = 2.2;
+const FOCUS: f32 = 60.0;
+
 pub struct Scene {
     pub eye: Vec3,
     canvas_wv: Vec3,
@@ -30,8 +34,10 @@ impl Scene {
         Scene::new_with_antialiasing(data, 1)
     }
     pub fn new_with_antialiasing(data: InputData, antialiasing: u8) -> Scene {
-        let center = data.eye + data.view_direction.normalize();
-        let width = (data.fov / 2.0).to_radians().tan() * data.view_direction.length() * 2.0;
+        let target = FOCAL_LEN*FOCUS / (FOCAL_LEN + FOCUS);
+        let center = data.eye + data.view_direction.normalize() * target;
+        let width =
+            (data.fov / 2.0).to_radians().tan() * data.view_direction.length() * target * 2.0;
         let height = width * (data.resolution.1 as f32 / data.resolution.0 as f32);
         let unit_up = data.up_direction.normalize();
         let unit_left = unit_up.cross(data.view_direction).normalize();
@@ -138,7 +144,8 @@ fn render_worker_inner(
         let epsilon_factor = 1.0 / (2 * scene.resolution.0.max(scene.resolution.1)) as f32;
         let reflect_color: Vec3 = {
             // estimate sample count
-            let samples = ((importance * (MAX_RECURSION_DEPTH - recursion_depth) as f32) as u32).max(1);
+            let samples =
+                ((importance * (MAX_RECURSION_DEPTH - recursion_depth) as f32) as u32).max(1);
             (0..samples)
                 .into_par_iter()
                 .map_init(
@@ -169,6 +176,7 @@ fn render_worker_inner(
     })
 }
 
+const DIST_SAMPLE_RATE: u32 = 256;
 impl Scene {
     pub fn render(&mut self, file: &mut File) -> Result<()> {
         file.write("P6\n".as_bytes())?;
@@ -205,7 +213,33 @@ impl Scene {
                                 + self.canvas_hv.normalize()
                                     * world_pixel_height
                                     * (r as f32 + subr);
-                            render_worker(&pixel_coord, self)
+                            (0..DIST_SAMPLE_RATE)
+                                .into_par_iter()
+                                .map_init(
+                                    || thread_rng(),
+                                    |rng, _| {
+                                        let orig_ray = Ray::new(pixel_coord, pixel_coord - self.eye);
+                                        let lens_length = FOCAL_LEN / APERTURE;
+                                        let unit_circle: [f32; 2] = rng.sample(UnitCircle);
+                                        let lens_pt = (self.canvas_wv.normalize()
+                                            * unit_circle[0]
+                                            + self.canvas_hv.normalize() * unit_circle[1])
+                                            * lens_length
+                                            + self.eye;
+                                        let focus = orig_ray.lerp(FOCUS);
+                                        render_worker_inner(
+                                            &lens_pt,
+                                            &(focus - orig_ray.origin),
+                                            self,
+                                            1.0,
+                                            0,
+                                            None,
+                                        )
+                                        .unwrap_or(self.background.clone())
+                                    },
+                                )
+                                .map(|e| e / (DIST_SAMPLE_RATE as f32))
+                                .sum::<Vec3>()
                         })
                         .map(|v| v / (self.antialiasing as f32))
                         .sum::<Vec3>()
